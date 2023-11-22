@@ -103,8 +103,7 @@ func (t *TCPTransport) handleConn(conn net.Conn) {
 	for {
 		err := t.Decoder.Decode(conn, &rpc)
 		
-		//! non-valid error check
-		if err == net.ErrClosed {
+		if _, ok := err.(*net.OpError); ok {
 			return
 		}
 

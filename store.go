@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"strings"
@@ -12,11 +14,11 @@ import (
 
 type PathKey struct {
 	Pathname string
-	Original string
+	Filename string
 }
 
-func (p PathKey) Filename() string {
-	return fmt.Sprintf("%s/%s", p.Pathname, p.Original)
+func (p PathKey) FullPath() string {
+	return fmt.Sprintf("%s/%s", p.Pathname, p.Filename)
 }
 
 type PathTransformFunc func(string) PathKey
@@ -24,7 +26,7 @@ type PathTransformFunc func(string) PathKey
 func DefaultPathTransformFunc(key string) PathKey {
 	return PathKey{
 		Pathname: key,
-		Original: key,
+		Filename: key,
 	}
 }
 
@@ -44,7 +46,7 @@ func CASPathTransformFunc(key string) PathKey {
 
 	return PathKey{
 		Pathname: strings.Join(paths, "/"),
-		Original: hashStr,
+		Filename: hashStr,
 	}
 }
 
@@ -62,6 +64,49 @@ func NewStore(opts StoreOpts) *Store {
 	}
 }
 
+func (s *Store) Has(key string) bool {
+	pathKey := s.PathTransformFunc(key)
+
+	_, err := os.Stat(pathKey.FullPath())
+	
+	return err != fs.ErrNotExist
+}
+
+func (s *Store) Delete(key string) error {
+	var err error
+	pathKey := s.PathTransformFunc(key)
+
+	defer func() {
+		if err == nil {
+			log.Printf("deleted [%s] from disk successfully", pathKey.Filename)
+		}
+	}()
+
+	err = os.Remove(pathKey.FullPath())
+	return err
+}
+
+func (s *Store) Read(key string) (io.Reader, error) {
+	f, err := s.readStream(key)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer f.Close()
+
+	buf := new(bytes.Buffer)
+
+	_, err = io.Copy(buf, f)
+
+	return buf, err
+}
+
+func (s *Store) readStream(key string) (io.ReadCloser, error) {
+	pathKey := s.PathTransformFunc(key)
+	return os.Open(pathKey.FullPath())
+}
+
 func (s *Store) writeStream(key string, r io.Reader) error {
 	pathKey := s.PathTransformFunc(key)
 
@@ -69,7 +114,7 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 		return err
 	}
 
-	pathAndFilename := pathKey.Filename()
+	pathAndFilename := pathKey.FullPath()
 
 	f, err := os.Create(pathAndFilename)
 
